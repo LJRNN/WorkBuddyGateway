@@ -10,7 +10,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -62,28 +66,37 @@ public class MainActivity extends Activity {
     private static final int TAB_ACCOUNTS = 2;
     private static final int TAB_TASKS = 3;
 
-    private static final int C_BG = 0xFFF4F6FB;
-    private static final int C_CARD = 0xFFFFFFFF;
-    private static final int C_TEXT = 0xFF111827;
-    private static final int C_MUTED = 0xFF6B7280;
-    private static final int C_BLUE = 0xFF2F6BFF;
-    private static final int C_GREEN = 0xFF0E9F6E;
-    private static final int C_RED = 0xFFDB3B3B;
-    private static final int C_GRAY = 0xFF9CA3AF;
-    private static final int C_ORANGE = 0xFFD97706;
-    /** 次级面：未选中 tab、次按钮、输入框底色。 */
-    private static final int C_SURFACE = 0xFFEFF2F8;
-    private static final int C_LINE = 0xFFE5E9F0;
-    private static final int C_BLUE_SOFT = 0xFFE8EFFF;
-    private static final int C_GREEN_SOFT = 0xFFE3F6EE;
-    private static final int C_HEAD_FROM = 0xFF2F6BFF;
-    private static final int C_HEAD_TO = 0xFF7BA6FF;
+    // ---- Telegram 浅色色板：白底、灰列表、单一主蓝 ----
+    private static final int C_BG = 0xFFF4F4F5;       // 列表底色
+    private static final int C_CARD = 0xFFFFFFFF;     // 分组卡片
+    private static final int C_TEXT = 0xFF0F0F0F;
+    private static final int C_MUTED = 0xFF707579;
+    private static final int C_BLUE = 0xFF3390EC;     // TG 主蓝
+    private static final int C_GREEN = 0xFF31A24C;
+    private static final int C_RED = 0xFFE5484D;
+    private static final int C_GRAY = 0xFF8E9297;
+    private static final int C_ORANGE = 0xFFE08B00;
+    /** 次级面：未选中页签、次按钮、状态胶囊底。 */
+    private static final int C_SURFACE = 0xFFF1F2F4;
+    private static final int C_LINE = 0xFFE4E9EF;
+    private static final int C_BLUE_SOFT = 0xFFE7F1FD;
+    private static final int C_GREEN_SOFT = 0xFFE6F6EC;
+
+    // 底栏图标类型
+    private static final int ICON_GRID = 0;
+    private static final int ICON_LAYERS = 1;
+    private static final int ICON_PERSON = 2;
+    private static final int ICON_LIST = 3;
+    private static final int ICON_PLAY = 4;
+    private static final int ICON_STOP = 5;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private FrameLayout content;
     private View[] pages = new View[4];
     private TextView[] tabViews = new TextView[4];
+    private IconView[] tabIcons = new IconView[4];
+    private IconView fabIcon;
     private int currentTab = TAB_OVERVIEW;
 
     private TextView statusPill;
@@ -101,11 +114,10 @@ public class MainActivity extends Activity {
     private TextView lanAddr;
     private TextView webUrlView;
     private View rootView;
+    private View bottomBar;
     private LinearLayout modelsBox;
     private LinearLayout accountsBox;
     private LinearLayout tasksBox;
-    private Button startBtn;
-    private Button stopBtn;
     private Button loginBtn;
     private Button doneBtn;
     private Button importBtn;
@@ -196,10 +208,15 @@ public class MainActivity extends Activity {
         root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
             @Override
             public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                // 底部导航栏高度交给底栏吃，白底一路铺到屏幕边，不留灰缝。
                 v.setPadding(insets.getSystemWindowInsetLeft(),
                         insets.getSystemWindowInsetTop(),
                         insets.getSystemWindowInsetRight(),
-                        insets.getSystemWindowInsetBottom());
+                        0);
+                if (bottomBar != null) {
+                    bottomBar.setPadding(0, bottomBar.getPaddingTop(), 0,
+                            insets.getSystemWindowInsetBottom());
+                }
                 return insets;
             }
         });
@@ -214,6 +231,110 @@ public class MainActivity extends Activity {
 
     private int dp(int v) {
         return (int) (getResources().getDisplayMetrics().density * v + 0.5f);
+    }
+
+    /**
+     * 自绘矢量图标（24×24 网格）：底栏四个入口 + 中间圆形启停键。
+     * 用代码画而不用 drawable，省资源也能跟着状态换色。
+     */
+    private class IconView extends View {
+        private int kind;
+        private int iconColor = C_GRAY;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+        private final Path path = new Path();
+
+        IconView(Context c, int kind) {
+            super(c);
+            this.kind = kind;
+        }
+
+        void setKind(int k) {
+            kind = k;
+            invalidate();
+        }
+
+        void setIconColor(int c) {
+            iconColor = c;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float w = getWidth(), h = getHeight();
+            float s = Math.min(w, h);
+            canvas.save();
+            canvas.translate((w - s) / 2f, (h - s) / 2f);
+            canvas.scale(s / 24f, s / 24f);
+            p.setColor(iconColor);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setStrokeJoin(Paint.Join.ROUND);
+            p.setStrokeWidth(1.9f);
+            p.setStyle(Paint.Style.STROKE);
+            switch (kind) {
+                case ICON_GRID:
+                    rect.set(4f, 4f, 10.6f, 10.6f);
+                    canvas.drawRoundRect(rect, 2.2f, 2.2f, p);
+                    rect.set(13.4f, 4f, 20f, 10.6f);
+                    canvas.drawRoundRect(rect, 2.2f, 2.2f, p);
+                    rect.set(4f, 13.4f, 10.6f, 20f);
+                    canvas.drawRoundRect(rect, 2.2f, 2.2f, p);
+                    rect.set(13.4f, 13.4f, 20f, 20f);
+                    canvas.drawRoundRect(rect, 2.2f, 2.2f, p);
+                    break;
+                case ICON_LAYERS:
+                    path.reset();
+                    path.moveTo(12f, 3.6f);
+                    path.lineTo(20.4f, 8f);
+                    path.lineTo(12f, 12.4f);
+                    path.lineTo(3.6f, 8f);
+                    path.close();
+                    canvas.drawPath(path, p);
+                    path.reset();
+                    path.moveTo(3.6f, 12.2f);
+                    path.lineTo(12f, 16.6f);
+                    path.lineTo(20.4f, 12.2f);
+                    canvas.drawPath(path, p);
+                    path.reset();
+                    path.moveTo(3.6f, 16.2f);
+                    path.lineTo(12f, 20.6f);
+                    path.lineTo(20.4f, 16.2f);
+                    canvas.drawPath(path, p);
+                    break;
+                case ICON_PERSON:
+                    canvas.drawCircle(12f, 8.4f, 3.5f, p);
+                    rect.set(4.2f, 13.2f, 19.8f, 27.6f);
+                    canvas.drawArc(rect, 180f, 180f, false, p);
+                    break;
+                case ICON_LIST:
+                    p.setStyle(Paint.Style.FILL);
+                    canvas.drawCircle(5.2f, 7f, 1.35f, p);
+                    canvas.drawCircle(5.2f, 12f, 1.35f, p);
+                    canvas.drawCircle(5.2f, 17f, 1.35f, p);
+                    p.setStyle(Paint.Style.STROKE);
+                    canvas.drawLine(9.4f, 7f, 19.6f, 7f, p);
+                    canvas.drawLine(9.4f, 12f, 19.6f, 12f, p);
+                    canvas.drawLine(9.4f, 17f, 15.6f, 17f, p);
+                    break;
+                case ICON_PLAY:
+                    p.setStyle(Paint.Style.FILL);
+                    path.reset();
+                    path.moveTo(9f, 6f);
+                    path.lineTo(18.6f, 12f);
+                    path.lineTo(9f, 18f);
+                    path.close();
+                    canvas.drawPath(path, p);
+                    break;
+                case ICON_STOP:
+                    p.setStyle(Paint.Style.FILL);
+                    rect.set(7.6f, 7.6f, 16.4f, 16.4f);
+                    canvas.drawRoundRect(rect, 2.4f, 2.4f, p);
+                    break;
+                default:
+                    break;
+            }
+            canvas.restore();
+        }
     }
 
     private GradientDrawable round(int color, int radiusDp) {
@@ -247,15 +368,14 @@ public class MainActivity extends Activity {
         return r;
     }
 
+    /** Telegram 风格分组卡片：白底、小圆角、无投影，之间留 8dp。 */
     private LinearLayout card() {
         LinearLayout c = column();
-        c.setPadding(dp(18), dp(16), dp(18), dp(16));
-        c.setBackground(round(C_CARD, 20));
-        c.setClipToOutline(true);
-        c.setElevation(dp(1));
+        c.setPadding(dp(16), dp(14), dp(16), dp(14));
+        c.setBackground(round(C_CARD, 12));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.setMargins(0, 0, 0, dp(12));
+        p.setMargins(0, 0, 0, dp(8));
         c.setLayoutParams(p);
         return c;
     }
@@ -266,18 +386,19 @@ public class MainActivity extends Activity {
         b.setAllCaps(false);
         b.setTextSize(14);
         b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setPadding(dp(16), 0, dp(16), 0);
+        b.setPadding(dp(14), 0, dp(14), 0);
         b.setOnClickListener(l);
         b.setStateListAnimator(null);
         if (primary) {
             b.setTextColor(0xFFFFFFFF);
-            b.setBackground(round(C_BLUE, 12));
+            b.setBackground(round(C_BLUE, 10));
         } else {
-            b.setTextColor(C_TEXT);
-            b.setBackground(round(C_SURFACE, 12));
+            // 次要按钮走「淡底 + 主蓝字」，和 TG 的行内按钮一致。
+            b.setTextColor(C_BLUE);
+            b.setBackground(round(C_SURFACE, 10));
         }
-        b.setMinHeight(dp(46));
-        b.setMinimumHeight(dp(46));
+        b.setMinHeight(dp(42));
+        b.setMinimumHeight(dp(42));
         return b;
     }
 
@@ -290,7 +411,7 @@ public class MainActivity extends Activity {
 
     private ScrollView page(LinearLayout col) {
         ScrollView s = new ScrollView(this);
-        col.setPadding(dp(14), dp(14), dp(14), dp(30));
+        col.setPadding(dp(12), dp(12), dp(12), dp(24));
         View body = col;
         if (isWide()) {
             List<View> children = new ArrayList<View>();
@@ -324,80 +445,28 @@ public class MainActivity extends Activity {
         LinearLayout root = column();
         root.setBackgroundColor(C_BG);
 
-        LinearLayout header = card();
-        header.setPadding(dp(18), dp(18), dp(18), dp(18));
-        GradientDrawable headBg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{C_HEAD_FROM, C_HEAD_TO});
-        headBg.setCornerRadius(dp(24));
-        header.setBackground(headBg);
+        // ---------- 顶部栏：白底大标题 + 右侧状态胶囊 + 1px 分隔线 ----------
+        LinearLayout header = column();
+        header.setBackgroundColor(C_CARD);
+        header.setPadding(dp(16), dp(12), dp(16), dp(9));
 
         LinearLayout top = row();
         TextView title = text(Gateway.hasAudioModel(this) ? "WorkBuddy 网关" : "WorkBuddy 网关 · 轻量版",
-                21, 0xFFFFFFFF, true);
-        title.setLetterSpacing(0.01f);
+                20, C_TEXT, true);
         top.addView(title, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        statusPill = text("已停止", 12, C_MUTED, true);
-        statusPill.setPadding(dp(12), dp(5), dp(12), dp(5));
-        statusPill.setBackground(round(0xFFFFFFFF, 20));
+        statusPill = text("已停止", 11, C_GRAY, true);
+        statusPill.setPadding(dp(9), dp(4), dp(9), dp(4));
+        statusPill.setBackground(round(C_SURFACE, 20));
         top.addView(statusPill);
         header.addView(top);
 
-        headerSub = text("", 12, 0xE6FFFFFF, false);
-        headerSub.setPadding(0, dp(4), 0, dp(12));
+        headerSub = text("", 12, C_MUTED, false);
+        headerSub.setPadding(0, dp(2), 0, 0);
         header.addView(headerSub);
 
-        LinearLayout actions = row();
-        startBtn = button("启动网关", true, new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                startGateway();
-            }
-        });
-        stopBtn = button("停止", false, new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                stopService(new Intent(MainActivity.this, WbService.class));
-                ui.postDelayed(ticker, 300);
-            }
-        });
-        // 渐变底上的按钮：主操作白底蓝字，次操作用半透明白，避免蓝压蓝。
-        startBtn.setTextColor(C_BLUE);
-        startBtn.setBackground(round(0xFFFFFFFF, 12));
-        stopBtn.setTextColor(0xFFFFFFFF);
-        stopBtn.setBackground(round(0x33FFFFFF, 12));
-        actions.addView(startBtn, weightParams());
-        actions.addView(stopBtn, weightParams());
-        header.addView(actions);
         root.addView(header);
-
-        LinearLayout tabBar = row();
-        tabBar.setPadding(dp(4), dp(4), dp(4), dp(4));
-        GradientDrawable tabBg = new GradientDrawable();
-        tabBg.setColor(C_SURFACE);
-        tabBg.setCornerRadius(dp(14));
-        tabBar.setBackground(tabBg);
-        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tabLp.setMargins(dp(2), 0, dp(2), dp(10));
-        tabBar.setLayoutParams(tabLp);
-        String[] names = {"概览", "模型", "账号", "任务"};
-        for (int i = 0; i < names.length; i++) {
-            final int idx = i;
-            TextView t = text(names[i], 14, C_MUTED, false);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(0, dp(9), 0, dp(9));
-            t.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    switchTab(idx);
-                }
-            });
-            tabBar.addView(t, weightParams());
-            tabViews[i] = t;
-        }
-        root.addView(tabBar);
+        root.addView(divider());
 
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(
@@ -411,14 +480,88 @@ public class MainActivity extends Activity {
             p.setVisibility(View.GONE);
             content.addView(p);
         }
+        bottomBar = buildBottomBar();
+        root.addView(bottomBar);
         return root;
+    }
+
+    /** Telegram 式底栏：四个文字入口，中间凸起一颗圆形启停键。 */
+    private View buildBottomBar() {
+        FrameLayout wrap = new FrameLayout(this);
+        // 顶部留出圆键凸起的空间，避免压到页面内容。
+        wrap.setPadding(0, dp(26), 0, 0);
+
+        LinearLayout bar = column();
+        bar.setBackgroundColor(C_CARD);
+        bar.addView(divider());
+
+        LinearLayout inside = row();
+        inside.setPadding(dp(3), dp(5), dp(3), dp(6));
+
+        String[] names = {"概览", "模型", "账号", "任务"};
+        int[] kinds = {ICON_GRID, ICON_LAYERS, ICON_PERSON, ICON_LIST};
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            LinearLayout item = column();
+            item.setGravity(Gravity.CENTER);
+            item.setPadding(0, dp(4), 0, dp(2));
+            final IconView ic = new IconView(this, kinds[i]);
+            ic.setIconColor(C_GRAY);
+            item.addView(ic, new LinearLayout.LayoutParams(dp(23), dp(23)));
+            TextView t = text(names[i], 10, C_GRAY, false);
+            t.setPadding(0, dp(3), 0, 0);
+            item.addView(t);
+            item.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    switchTab(idx);
+                }
+            });
+            inside.addView(item, weightParams());
+            tabViews[i] = t;
+            tabIcons[i] = ic;
+            if (i == 1) {
+                // 正中间留一格给圆键，宽高与两侧入口一致
+                inside.addView(new View(this), new LinearLayout.LayoutParams(0, dp(1), 1f));
+            }
+        }
+        bar.addView(inside);
+        wrap.addView(bar, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM));
+
+        FrameLayout fab = new FrameLayout(this);
+        GradientDrawable fb = new GradientDrawable();
+        fb.setShape(GradientDrawable.OVAL);
+        fb.setColor(C_BLUE);
+        fab.setBackground(fb);
+        fab.setElevation(dp(6));
+        fabIcon = new IconView(this, ICON_PLAY);
+        fabIcon.setIconColor(0xFFFFFFFF);
+        fab.addView(fabIcon, new FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER));
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (WbService.isRunning()) {
+                    stopService(new Intent(MainActivity.this, WbService.class));
+                    ui.postDelayed(ticker, 300);
+                    toast("已停止网关");
+                } else {
+                    startGateway();
+                }
+            }
+        });
+        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(50), dp(50));
+        fp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        wrap.addView(fab, fp);
+        return wrap;
     }
 
     private View buildOverview() {
         LinearLayout col = column();
 
         LinearLayout info = card();
-        info.addView(text("接入信息", 15, C_TEXT, true));
+        info.addView(text("接入信息", 16, C_TEXT, true));
         info.addView(text("OpenAI 兼容地址与密钥，填到客户端里即可。", 12, C_MUTED, false));
 
         info.addView(label("BASE URL", true));
@@ -483,7 +626,7 @@ public class MainActivity extends Activity {
         // 抽帧参数：概览第二屏就能看到，点开是底部弹层，不用滚到诊断最底下。
         LinearLayout frameCard = card();
         LinearLayout fHead = row();
-        fHead.addView(text("视频抽帧", 15, C_TEXT, true), new LinearLayout.LayoutParams(0,
+        fHead.addView(text("视频抽帧", 16, C_TEXT, true), new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         fHead.addView(text("调整 ›", 13, C_BLUE, true));
         frameCard.addView(fHead);
@@ -501,7 +644,7 @@ public class MainActivity extends Activity {
 
         // 运行健康：不持唤醒锁，被系统冻结/回收是常态，得让用户看得见。
         LinearLayout health = card();
-        health.addView(text("运行健康", 15, C_TEXT, true));
+        health.addView(text("运行健康", 16, C_TEXT, true));
         healthView = text("", 12, C_MUTED, false);
         healthView.setPadding(0, dp(6), 0, dp(2));
         health.addView(healthView);
@@ -520,7 +663,7 @@ public class MainActivity extends Activity {
 
 
         LinearLayout acc = card();
-        acc.addView(text("账号概览", 15, C_TEXT, true));
+        acc.addView(text("账号概览", 16, C_TEXT, true));
         accountSummary = text("未获取", 13, C_MUTED, false);
         accountSummary.setPadding(0, dp(6), 0, dp(6));
         acc.addView(accountSummary);
@@ -538,7 +681,7 @@ public class MainActivity extends Activity {
         final LinearLayout dbody = column();
         dbody.setVisibility(View.GONE);
         LinearLayout dHead = row();
-        dHead.addView(text("诊断与调试", 15, C_TEXT, true), new LinearLayout.LayoutParams(0,
+        dHead.addView(text("诊断与调试", 16, C_TEXT, true), new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         final TextView dChevron = text("展开", 13, C_BLUE, true);
         dHead.addView(dChevron);
@@ -637,7 +780,7 @@ public class MainActivity extends Activity {
 
         LinearLayout logs = card();
         LinearLayout logHead = row();
-        logHead.addView(text("运行日志", 15, C_TEXT, true), new LinearLayout.LayoutParams(
+        logHead.addView(text("运行日志", 16, C_TEXT, true), new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button full = button("全部", false, new View.OnClickListener() {
             @Override
@@ -657,7 +800,7 @@ public class MainActivity extends Activity {
         col.addView(logs);
 
         LinearLayout oss = card();
-        oss.addView(text("开源与许可", 15, C_TEXT, true));
+        oss.addView(text("开源与许可", 16, C_TEXT, true));
         oss.addView(text("本应用基于开源项目与公开模型构建（TFLite、YAMNet、PANNs 等）。",
                 12, C_MUTED, false));
         oss.addView(button("查看开源组件", false, new View.OnClickListener() {
@@ -675,7 +818,7 @@ public class MainActivity extends Activity {
         LinearLayout col = column();
         LinearLayout head = card();
         LinearLayout r = row();
-        r.addView(text("模型列表", 15, C_TEXT, true), new LinearLayout.LayoutParams(
+        r.addView(text("模型列表", 16, C_TEXT, true), new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button refresh = button("刷新", false, new View.OnClickListener() {
             @Override
@@ -701,7 +844,7 @@ public class MainActivity extends Activity {
         LinearLayout col = column();
 
         LinearLayout actions = card();
-        actions.addView(text("账号管理", 15, C_TEXT, true));
+        actions.addView(text("账号管理", 16, C_TEXT, true));
         actions.addView(text("OAuth 登录或导入电脑上的凭证文件。", 11, C_MUTED, false));
 
         LinearLayout row1 = row();
@@ -764,7 +907,7 @@ public class MainActivity extends Activity {
         LinearLayout col = column();
 
         LinearLayout head = card();
-        head.addView(text("成长任务", 15, C_TEXT, true));
+        head.addView(text("成长任务", 16, C_TEXT, true));
         taskSummary = text("尚未加载", 12, C_MUTED, false);
         taskSummary.setPadding(0, dp(4), 0, dp(6));
         head.addView(taskSummary);
@@ -809,8 +952,8 @@ public class MainActivity extends Activity {
     }
 
     private TextView label(String s, boolean topMargin) {
-        TextView t = text(s, 11, C_MUTED, false);
-        t.setPadding(0, dp(topMargin ? 12 : 4), 0, dp(2));
+        TextView t = text(s, 12, C_MUTED, false);
+        t.setPadding(0, dp(topMargin ? 11 : 4), 0, dp(2));
         return t;
     }
 
@@ -826,6 +969,10 @@ public class MainActivity extends Activity {
                 copy(value);
             }
         });
+        b.setTextSize(12);
+        b.setMinHeight(dp(32));
+        b.setMinimumHeight(dp(32));
+        b.setMinimumWidth(dp(52));
         r.addView(b);
         return r;
     }
@@ -833,11 +980,13 @@ public class MainActivity extends Activity {
     private void switchTab(int idx) {
         currentTab = idx;
         for (int i = 0; i < pages.length; i++) {
-            pages[i].setVisibility(i == idx ? View.VISIBLE : View.GONE);
-            tabViews[i].setTextColor(i == idx ? C_BLUE : C_MUTED);
-            tabViews[i].setTypeface(i == idx ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-            tabViews[i].setBackground(i == idx ? round(C_CARD, 11) : null);
-            tabViews[i].setElevation(i == idx ? dp(1) : 0);
+            boolean on = i == idx;
+            pages[i].setVisibility(on ? View.VISIBLE : View.GONE);
+            tabViews[i].setTextColor(on ? C_BLUE : C_GRAY);
+            tabViews[i].setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            if (tabIcons[i] != null) {
+                tabIcons[i].setIconColor(on ? C_BLUE : C_GRAY);
+            }
         }
         if (idx == TAB_MODELS) {
             loadModels();
@@ -874,10 +1023,15 @@ public class MainActivity extends Activity {
 
     private void refreshLocal() {
         boolean run = WbService.isRunning();
-        statusPill.setText(run ? "● 运行中" : "○ 已停止");
-        statusPill.setTextColor(run ? C_GREEN : C_MUTED);
-        startBtn.setEnabled(!run);
-        stopBtn.setEnabled(run);
+        String want = run ? "运行中" : "已停止";
+        if (!want.contentEquals(statusPill.getText())) {
+            statusPill.setText(want);
+            statusPill.setTextColor(run ? C_GREEN : C_GRAY);
+            statusPill.setBackground(round(run ? C_GREEN_SOFT : C_SURFACE, 20));
+        }
+        if (fabIcon != null && fabIcon.kind != (run ? ICON_STOP : ICON_PLAY)) {
+            fabIcon.setKind(run ? ICON_STOP : ICON_PLAY);
+        }
 
         String all = WbService.logText();
         if (all.length() == 0) {
