@@ -1,0 +1,38 @@
+# 构建产物
+dist/
+.build/
+*.apk
+*.idsig
+*.dex
+
+# 模型（大文件，需自行准备）
+app/models/cnn14.tflite
+app/models/*.tflite.bak
+
+# 本地配置与凭证
+gateway/config.json
+gateway/auths/
+gateway/state.json
+gateway/tmp/
+*.json.bak
+
+# 密钥
+*.keystore
+*.jks
+!build/wb.keystore.example
+
+# IDE / 系统
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+gateway/*.log
+
+# Python（模型转换用）
+__pycache__/
+*.pyc
+.venv/

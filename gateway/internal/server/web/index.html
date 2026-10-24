@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WorkBuddy 网关</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --text:#e6e8ee;
+    --muted:#8b93a7; --accent:#4c8dff; --user:#1d2330; --bot:#171a21;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; height:100vh;
+  }
+  header{
+    display:flex; gap:10px; align-items:center; padding:10px 16px;
+    border-bottom:1px solid var(--line); background:#12151b; flex-wrap:wrap;
+  }
+  .brand{font-weight:600; letter-spacing:.3px}
+  .brand span{color:var(--accent)}
+  select,button,textarea{
+    font:inherit; color:var(--text); background:var(--card);
+    border:1px solid var(--line); border-radius:8px; padding:6px 10px;
+  }
+  button{cursor:pointer}
+  button:hover{border-color:#3a4256}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600}
+  button.primary:disabled{opacity:.5; cursor:default}
+  #model{max-width:260px}
+  .spacer{flex:1}
+  main{flex:1; overflow-y:auto; padding:18px 16px; display:flex; flex-direction:column; gap:14px}
+  .msg{max-width:860px; width:100%; margin:0 auto; display:flex; gap:10px}
+  .avatar{width:28px;height:28px;border-radius:8px;flex:0 0 28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+  .user .avatar{background:#2b3a55;color:#9dc0ff}
+  .bot .avatar{background:#23302a;color:#7ee2a8}
+  .bubble{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; white-space:pre-wrap; word-break:break-word; flex:1}
+  .user .bubble{background:var(--user)}
+  .meta{color:var(--muted); font-size:12px; margin-top:6px}
+  footer{border-top:1px solid var(--line); padding:12px 16px; background:#12151b}
+  .wrap{max-width:880px;margin:0 auto}
+  #attach{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .chip{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px}
+  .chip b{font-weight:500;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip i{cursor:pointer;color:var(--muted);font-style:normal}
+  .row{display:flex;gap:8px;align-items:flex-end}
+  textarea{flex:1;resize:none;height:52px;max-height:160px;padding:10px 12px;border-radius:12px}
+  .tools{display:flex;gap:8px}
+  .file{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:6px;
+        border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--card)}
+  .file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .hint{color:var(--muted);font-size:12px;margin-top:6px}
+  .err{color:#ff8f8f}
+  @media(max-width:640px){ .msg{max-width:100%} #model{max-width:150px} }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">WorkBuddy <span>网关</span></div>
+  <select id="model"></select>
+  <button id="keyBtn">设置 Key</button>
+  <div class="spacer"></div>
+  <button id="clear">清空对话</button>
+</header>
+
+<main id="chat">
+  <div class="msg bot">
+    <div class="avatar">AI</div>
+    <div class="bubble">这是网关自带的网页客户端。先在右上角填 API Key，再选模型就能用。
+支持文字、图片、音频（音频会走转写与音效识别）。</div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div id="attach"></div>
+    <div class="row">
+      <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+      <div class="tools">
+        <label class="file">图片<input id="img" type="file" accept="image/*" multiple></label>
+        <label class="file">音频<input id="aud" type="file" accept="audio/*"></label>
+        <button class="primary" id="send">发送</button>
+      </div>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const chat = $('#chat'), input = $('#input'), sendBtn = $('#send');
+  const modelSel = $('#model'), attachBox = $('#attach'), hint = $('#hint');
+  let key = localStorage.getItem('wb_key') || '';
+  let messages = [];
+  let attachments = [];
+
+  function setHint(t, isErr){
+    hint.textContent = t || '';
+    hint.className = 'hint' + (isErr ? ' err' : '');
+  }
+
+  function askKey(){
+    const v = prompt('API Key（在 App 概览页可复制）', key || '');
+    if (v === null) return;
+    key = v.trim();
+    localStorage.setItem('wb_key', key);
+    loadModels();
+  }
+
+  async function loadModels(){
+    modelSel.innerHTML = '<option>加载中…</option>';
+    try{
+      const r = await fetch('/v1/models', { headers: key ? { Authorization: 'Bearer ' + key } : {} });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const list = (j.data || []).filter(m => m.id);
+      modelSel.innerHTML = '';
+      for (const m of list){
+        const o = document.createElement('option');
+        o.value = m.id;
+        o.textContent = m.id + (m.supports_images ? ' · 可看图' : '');
+        modelSel.appendChild(o);
+      }
+      const saved = localStorage.getItem('wb_model');
+      if (saved && list.some(m => m.id === saved)) modelSel.value = saved;
+      setHint('共 ' + list.length + ' 个模型');
+    }catch(e){
+      modelSel.innerHTML = '<option>无法获取模型</option>';
+      setHint('获取模型失败：' + e.message + '（检查 Key 或账号状态）', true);
+    }
+  }
+
+  function addMsg(role, text){
+    const div = document.createElement('div');
+    div.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+    const av = document.createElement('div');
+    av.className = 'avatar';
+    av.textContent = role === 'user' ? '我' : 'AI';
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = text;
+    div.appendChild(av); div.appendChild(b);
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return b;
+  }
+
+  function fileToDataURL(file){
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => rej(new Error('读取失败'));
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function renderAttach(){
+    attachBox.innerHTML = '';
+    attachments.forEach((a, i) => {
+      const c = document.createElement('div');
+      c.className = 'chip';
+      const b = document.createElement('b');
+      b.textContent = (a.kind === 'image' ? '🖼 ' : '🎵 ') + a.name;
+      const x = document.createElement('i');
+      x.textContent = '×';
+      x.onclick = () => { attachments.splice(i, 1); renderAttach(); };
+      c.appendChild(b); c.appendChild(x);
+      attachBox.appendChild(c);
+    });
+  }
+
+  $('#img').addEventListener('change', async e => {
+    for (const f of e.target.files){
+      if (!f.type.startsWith('image/')) continue;
+      const url = await fileToDataURL(f);
+      attachments.push({ kind:'image', name:f.name, url });
+    }
+    e.target.value = '';
+    renderAttach();
+  });
+
+  $('#aud').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const url = await fileToDataURL(f);
+    const comma = url.indexOf(',');
+    const b64 = url.slice(comma + 1);
+    const fmt = (f.name.split('.').pop() || 'mp3').toLowerCase();
+    attachments.push({ kind:'audio', name:f.name, data:b64, format:fmt });
+    e.target.value = '';
+    renderAttach();
+  });
+
+  function buildContent(text){
+    const parts = [];
+    for (const a of attachments){
+      if (a.kind === 'image') parts.push({ type:'image_url', image_url:{ url:a.url } });
+      else parts.push({ type:'input_audio', input_audio:{ data:a.data, format:a.format } });
+    }
+    if (text) parts.push({ type:'text', text });
+    return parts.length === 1 ? parts[0].text || parts[0] : parts;
+  }
+
+  async function send(){
+    const text = input.value.trim();
+    if (!text && attachments.length === 0) return;
+    if (!key){ askKey(); return; }
+
+    const content = buildContent(text);
+    messages.push({ role:'user', content });
+    addMsg('user', text + (attachments.length ? '\n（附件 ' + attachments.length + ' 个）' : ''));
+    input.value = '';
+    attachments = [];
+    renderAttach();
+
+    sendBtn.disabled = true;
+    const bubble = addMsg('assistant', '');
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    bubble.parentElement.appendChild(meta);
+    const t0 = Date.now();
+
+    try{
+      const r = await fetch('/v1/chat/completions', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + key },
+        body: JSON.stringify({ model: modelSel.value, messages, stream:true })
+      });
+      if (!r.ok){
+        const t = await r.text();
+        bubble.textContent = '请求失败：' + t.slice(0, 500);
+        bubble.classList.add('err');
+        messages.pop();
+        return;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', out = '';
+      while (true){
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream:true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0){
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          try{
+            const j = JSON.parse(data);
+            const d = j.choices && j.choices[0] && j.choices[0].delta;
+            if (d && d.content){ out += d.content; bubble.textContent = out; chat.scrollTop = chat.scrollHeight; }
+          }catch(_){}
+        }
+      }
+      if (!out) bubble.textContent = '(空响应)';
+      messages.push({ role:'assistant', content: out });
+      meta.textContent = modelSel.value + ' · ' + ((Date.now() - t0) / 1000).toFixed(1) + 's';
+    }catch(e){
+      bubble.textContent = '请求出错：' + e.message;
+      bubble.classList.add('err');
+      messages.pop();
+    }finally{
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  sendBtn.onclick = send;
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); }
+  });
+  $('#keyBtn').onclick = askKey;
+  $('#clear').onclick = () => {
+    messages = []; chat.querySelectorAll('.msg').forEach((n, i) => { if (i > 0) n.remove(); });
+  };
+  modelSel.onchange = () => localStorage.setItem('wb_model', modelSel.value);
+
+  loadModels();
+  if (!key) setHint('还没设置 API Key，点右上角「设置 Key」');
+  input.focus();
+})();
+</script>
+</body>
+</html>
