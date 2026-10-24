@@ -363,6 +363,11 @@ public class MainActivity extends Activity {
                 ui.postDelayed(ticker, 300);
             }
         });
+        // 渐变底上的按钮：主操作白底蓝字，次操作用半透明白，避免蓝压蓝。
+        startBtn.setTextColor(C_BLUE);
+        startBtn.setBackground(round(0xFFFFFFFF, 12));
+        stopBtn.setTextColor(0xFFFFFFFF);
+        stopBtn.setBackground(round(0x33FFFFFF, 12));
         actions.addView(startBtn, weightParams());
         actions.addView(stopBtn, weightParams());
         header.addView(actions);
