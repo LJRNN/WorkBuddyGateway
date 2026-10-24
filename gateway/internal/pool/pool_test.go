@@ -211,3 +211,38 @@ func TestRemoveMissingFromDir(t *testing.T) {
 		t.Fatal("u1 should not exist")
 	}
 }
+
+func TestSoftBackoffGrowsAndCaps(t *testing.T) {
+	p := New("")
+	p.Add(&auth.Auth{UID: "u", AccessToken: "t"})
+	base, max := 600*time.Second, time.Hour
+
+	d1 := p.SoftBackoff("u", "429", base, max)
+	d2 := p.SoftBackoff("u", "429", base, max)
+	d3 := p.SoftBackoff("u", "429", base, max)
+	d4 := p.SoftBackoff("u", "429", base, max)
+	if d1 != 10*time.Minute || d2 != 20*time.Minute || d3 != 40*time.Minute {
+		t.Fatalf("退避序列不对: %s %s %s", d1, d2, d3)
+	}
+	if d4 != max {
+		t.Fatalf("应封顶 %s，实际 %s", max, d4)
+	}
+	// 成功一次后重新从 base 起步
+	p.NoteSuccess("u")
+	if d := p.SoftBackoff("u", "429", base, max); d != base {
+		t.Fatalf("成功后未重置: %s", d)
+	}
+}
+
+func TestCoolHardUntilNextReset(t *testing.T) {
+	p := New("")
+	p.Add(&auth.Auth{UID: "u", AccessToken: "t"})
+	d := p.CoolHardUntil("u", time.Now().Hour(), "余额不足")
+	if d < time.Hour || d > 24*time.Hour {
+		t.Fatalf("冷却时长越界: %s", d)
+	}
+	st, _ := p.Status("u")
+	if !st.Cooling {
+		t.Fatalf("应处于冷却")
+	}
+}

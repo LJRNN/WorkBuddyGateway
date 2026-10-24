@@ -4,7 +4,7 @@
 #         ./build.sh lite     # 轻量版（无音频模型）
 #
 # 依赖环境变量:
-#   ANDROID_HOME     Android SDK 根目录（需 build-tools/34.0.0、platforms/android-33）
+#   ANDROID_HOME     Android SDK 根目录（需 build-tools/34.0.0、platforms/android-34）
 #   ANDROID_NDK_HOME Android NDK r26+ 根目录
 set -euo pipefail
 
@@ -13,7 +13,7 @@ VARIANT="${1:-full}"
 SDK="${ANDROID_HOME:?请设置 ANDROID_HOME}"
 NDK="${ANDROID_NDK_HOME:?请设置 ANDROID_NDK_HOME}"
 BT="$SDK/build-tools/34.0.0"
-ANDROID_JAR="$SDK/platforms/android-33/android.jar"
+ANDROID_JAR="$SDK/platforms/android-34/android.jar"
 NDK_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 WORK="$ROOT/.build"
 OUT="$ROOT/dist"
@@ -33,14 +33,18 @@ rm -rf "$WORK" && mkdir -p "$WORK"/{classes,dex,res,lib/arm64-v8a,lib/armeabi-v7
 # ---------- 1. Go 网关 → jniLibs ----------
 echo "==> 交叉编译 Go"
 cd "$ROOT/gateway"
-for arch in arm64:arm64-v8a:aarch64-linux-android26 armv7:armeabi-v7a:armv7a-linux-androideabi26; do
-  GOARCH="${arch%%:*}"; ABI="$(echo "$arch" | cut -d: -f2)"; CC_TRIPLE="$(echo "$arch" | cut -d: -f3)"
+build_arch() {
+  local goarch="$1" goarm="$2" abi="$3" triple="$4"
   for cmd in server login; do
-    lib="libwb2api.so"; [ "$cmd" = "login" ] && lib="libwb2login.so"
-    GOOS=android GOARCH="$GOARCH" CGO_ENABLED=1 CC="$NDK_BIN/${CC_TRIPLE}-clang" \
-      go build -trimpath -ldflags "-s -w" -o "$WORK/lib/$ABI/$lib" "./cmd/$cmd"
+    local lib="libwb2api.so"
+    [ "$cmd" = "login" ] && lib="libwb2login.so"
+    GOOS=android GOARCH="$goarch" GOARM="$goarm" CGO_ENABLED=1 \
+      CC="$NDK_BIN/${triple}-clang" \
+      go build -trimpath -ldflags "-s -w" -o "$WORK/lib/$abi/$lib" "./cmd/$cmd"
   done
-done
+}
+build_arch arm64 ""   arm64-v8a   aarch64-linux-android26
+build_arch arm   7    armeabi-v7a armv7a-linux-androideabi26
 
 # ---------- 2. 资源 ----------
 echo "==> 编译资源"
@@ -55,6 +59,18 @@ javac -source 8 -target 8 -nowarn -encoding UTF-8 \
   -d "$WORK/classes" @"$WORK/sources.txt" 2>&1 | grep -v "^注:" || true
 "$BT/d8" --release --lib "$ANDROID_JAR" --min-api 26 \
   --output "$WORK/dex" $(find "$WORK/classes" -name '*.class')
+
+# ---------- 3.5 TFLite 原生库 ----------
+# 轻量版没有模型文件，但库一起带上：抽帧服务会尝试初始化，缺库时抛
+# UnsatisfiedLinkError 虽然被兜住，日志里会多一条干扰信息。
+for abi in arm64-v8a armeabi-v7a; do
+  src="$ROOT/app/libs/jni/$abi/libtensorflowlite_jni.so"
+  if [ -f "$src" ]; then
+    cp "$src" "$WORK/lib/$abi/"
+  else
+    echo "!! 缺少 $src（TFLite 原生库），完整版会加载模型失败" >&2
+  fi
+done
 
 # ---------- 4. 模型 / 资源文件 ----------
 cp "$ROOT/build/test.mp4" "$WORK/assets/"

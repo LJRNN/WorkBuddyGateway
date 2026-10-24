@@ -6,7 +6,9 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -36,6 +38,15 @@ public class WbService extends Service {
     private Process proc;
     private Thread reader;
     private FrameService frameService;
+    private final Handler beatHandler = new Handler(Looper.getMainLooper());
+    private final Runnable beatTask = new Runnable() {
+        @Override
+        public void run() {
+            // 服务活着就打点；间隔异常会被 Gateway.beat 记成一次冻结。
+            Gateway.beat(WbService.this);
+            beatHandler.postDelayed(this, 30_000L);
+        }
+    };
 
     public static boolean isRunning() {
         return running;
@@ -62,6 +73,9 @@ public class WbService extends Service {
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         }
+        Gateway.noteBoot(this);
+        Gateway.beat(this);
+        beatHandler.postDelayed(beatTask, 30_000L);
         try {
             Gateway.cleanupTmp(this);
             frameService = new FrameService(this);
@@ -93,6 +107,7 @@ public class WbService extends Service {
 
     @Override
     public void onDestroy() {
+        beatHandler.removeCallbacks(beatTask);
         stopGateway();
         if (frameService != null) {
             frameService.stop();

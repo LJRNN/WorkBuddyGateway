@@ -24,8 +24,12 @@ type Config struct {
 	Upstream       *upstream.Client
 	APIKey         string        // 空 = 不鉴权
 	MaxRotate      int           // 单请求最多换号次数，默认 3
-	HardCooldown   time.Duration // 余额不足冷却，默认 12h
-	SoftCooldown   time.Duration // 429 冷却，默认 60s
+	HardCooldown   time.Duration // 余额不足冷却兜底，默认 12h
+	HardResetHour  int           // 余额冷却到最近这个整点（默认 4 点，积分按日重置）
+	SoftCooldown   time.Duration // 429 首次冷却，默认 10m，之后指数退避
+	SoftRateMax    time.Duration // 429 退避封顶，默认 1h
+	NotFoundCool   time.Duration // 上游 404 固定短冷却，默认 60s
+	StickySession  *bool         // nil = 开启会话粘性
 	ErrThreshold   int           // 连续其他错误冷却阈值，默认 3
 	ErrCooldown    time.Duration // 错误冷却时长，默认 10m
 	RefreshSkew    time.Duration // token 提前刷新窗口，默认 10m
@@ -43,8 +47,9 @@ var webHTML []byte
 
 // Handler 主路由。
 type Handler struct {
-	cfg Config
-	mux *http.ServeMux
+	cfg    Config
+	mux    *http.ServeMux
+	sticky *stickyTable
 }
 
 // NewHandler 构建 handler。
@@ -55,8 +60,17 @@ func NewHandler(cfg Config) *Handler {
 	if cfg.HardCooldown <= 0 {
 		cfg.HardCooldown = 12 * time.Hour
 	}
+	if cfg.HardResetHour < 0 || cfg.HardResetHour > 23 {
+		cfg.HardResetHour = 4
+	}
 	if cfg.SoftCooldown <= 0 {
-		cfg.SoftCooldown = 60 * time.Second
+		cfg.SoftCooldown = 10 * time.Minute
+	}
+	if cfg.SoftRateMax <= 0 {
+		cfg.SoftRateMax = time.Hour
+	}
+	if cfg.NotFoundCool <= 0 {
+		cfg.NotFoundCool = 60 * time.Second
 	}
 	if cfg.ErrThreshold <= 0 {
 		cfg.ErrThreshold = 3
@@ -67,7 +81,7 @@ func NewHandler(cfg Config) *Handler {
 	if cfg.RefreshSkew <= 0 {
 		cfg.RefreshSkew = 10 * time.Minute
 	}
-	h := &Handler{cfg: cfg, mux: http.NewServeMux()}
+	h := &Handler{cfg: cfg, mux: http.NewServeMux(), sticky: newStickyTable()}
 	h.mux.HandleFunc("POST /v1/chat/completions", h.withAuth(h.chatCompletions))
 	h.mux.HandleFunc("GET /v1/models", h.withAuth(h.models))
 	h.mux.HandleFunc("GET /status", h.withAuth(h.status))
@@ -376,17 +390,21 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		log.Printf("image: normalized %d part(s)", n)
 	}
 
-	var peek struct {
-		Stream bool `json:"stream"`
-	}
+	var peek chatPeek
 	_ = json.Unmarshal(body, &peek)
+
+	// 会话粘性：同一段对话尽量固定在同一账号，吃住上游前缀缓存。
+	stickyKey := ""
+	if h.cfg.StickySession == nil || *h.cfg.StickySession {
+		stickyKey = stickyKeyOf(body, &peek)
+	}
 
 	tried := map[string]bool{}
 	var lastErr error
 	audioPrepared := false
 	videoPrepared := false
 	for i := 0; i < h.cfg.MaxRotate; i++ {
-		acct := h.cfg.Pool.PickExcluding(tried)
+		acct := h.pickSticky(stickyKey, tried)
 		if acct == nil {
 			break
 		}
@@ -448,6 +466,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		rc, status, respBody, terr := h.cfg.Upstream.ChatStream(acct, body)
 		if terr != nil {
 			lastErr = terr
+			h.sticky.drop(stickyKey)
 			h.cfg.Pool.NoteError(acct.UID, h.cfg.ErrThreshold, h.cfg.ErrCooldown)
 			continue
 		}
@@ -455,11 +474,15 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			kind := upstream.Classify(status, string(respBody))
 			switch kind {
 			case upstream.ErrHardCredit:
-				h.cfg.Pool.Cooldown(acct.UID, pool.CoolHard, h.cfg.HardCooldown, "余额不足")
+				// 余额不足：关到次日积分重置后（默认 04:00），不要再压满 12h。
+				d := h.cfg.Pool.CoolHardUntil(acct.UID, h.cfg.HardResetHour, "余额不足")
+				log.Printf("pool: %s hard cooldown %s (until %02d:00)", acct.UID, d.Truncate(time.Minute), h.cfg.HardResetHour)
 				lastErr = &upstream.Error{Kind: kind, Status: status, Msg: string(respBody)}
 				continue
 			case upstream.ErrSoftRate:
-				h.cfg.Pool.Cooldown(acct.UID, pool.CoolSoft, h.cfg.SoftCooldown, "429 rate limit")
+				// 429：指数退避，避免把限流中的账号反复打醒。
+				d := h.cfg.Pool.SoftBackoff(acct.UID, "429 rate limit", h.cfg.SoftCooldown, h.cfg.SoftRateMax)
+				log.Printf("pool: %s soft backoff %s", acct.UID, d.Truncate(time.Second))
 				lastErr = &upstream.Error{Kind: kind, Status: status, Msg: string(respBody)}
 				continue
 			case upstream.ErrSessionDead:
@@ -467,8 +490,8 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 				lastErr = &upstream.Error{Kind: kind, Status: status, Msg: string(respBody)}
 				continue
 			case upstream.ErrNotFound:
-				// P2: 404 短冷却不累计 errCount（防雪崩）
-				h.cfg.Pool.Cooldown(acct.UID, pool.CoolSoft, h.cfg.SoftCooldown, "upstream 404")
+				// 404 是确定性错误，固定短冷却即可，不参与指数退避也不累计 errCount。
+				h.cfg.Pool.Cooldown(acct.UID, pool.CoolSoft, h.cfg.NotFoundCool, "upstream 404")
 				lastErr = &upstream.Error{Kind: kind, Status: status, Msg: string(respBody)}
 				continue
 			case upstream.ErrClient:
@@ -485,6 +508,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rc.Close()
 		h.cfg.Pool.NoteSuccess(acct.UID)
+		h.sticky.put(stickyKey, acct.UID)
 		if peek.Stream {
 			_ = upstream.Stream(w, rc)
 			return

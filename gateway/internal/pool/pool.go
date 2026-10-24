@@ -53,6 +53,7 @@ type entry struct {
 	reason    string
 	until     time.Time
 	errCount  int
+	rateHits  int    // 连续 429 次数，用于指数退避
 	tokenHash string // SDK 凭证指纹：换号/重登后自动解冻
 }
 
@@ -195,6 +196,65 @@ func (p *Pool) Cooldown(uid string, kind CoolKind, d time.Duration, reason strin
 	p.saveLocked()
 }
 
+// CoolHardUntil 余额不足：冷却到最近的 resetHour 点（默认次日 04:00）。
+// 积分按自然日重置，固定 12h 会在下午耗尽、次日 0 点已回血的账号上白白多关几小时；
+// 反过来在凌晨耗尽时又可能只关几分钟，所以下限保 1 小时。
+func (p *Pool) CoolHardUntil(uid string, resetHour int, reason string) time.Duration {
+	if resetHour < 0 || resetHour > 23 {
+		resetHour = 4
+	}
+	now := time.Now()
+	t := time.Date(now.Year(), now.Month(), now.Day(), resetHour, 0, 0, 0, now.Location())
+	if !t.After(now) {
+		t = t.Add(24 * time.Hour)
+	}
+	d := time.Until(t)
+	if d < time.Hour {
+		d = time.Hour
+	}
+	p.Cooldown(uid, CoolHard, d, reason)
+	return d
+}
+
+// SoftBackoff 429：按连续命中次数指数退避（base、2×base、4×base…，封顶 max）。
+// 一次性固定 60s 会在持续限流时把账号反复打醒，反而拉长风控窗口。
+func (p *Pool) SoftBackoff(uid, reason string, base, max time.Duration) time.Duration {
+	if base <= 0 {
+		base = 10 * time.Minute
+	}
+	if max <= 0 {
+		max = time.Hour
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	d := base
+	if e, ok := p.byUID[uid]; ok {
+		e.rateHits++
+		for i := 1; i < e.rateHits && d < max; i++ {
+			d *= 2
+		}
+		if d > max {
+			d = max
+		}
+		e.until = time.Now().Add(d)
+		e.reason = reason
+		e.errCount = 0
+		p.saveLocked()
+	}
+	return d
+}
+
+// Healthy 账号当前是否可用（未禁用、不在冷却期）。
+func (p *Pool) Healthy(uid string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	e, ok := p.byUID[uid]
+	if !ok {
+		return false
+	}
+	return e.healthy(time.Now())
+}
+
 // Disable 永久禁用（session 死亡），需人工重登后手工恢复或文件替换。
 func (p *Pool) Disable(uid, reason string) {
 	p.mu.Lock()
@@ -236,12 +296,13 @@ func (p *Pool) NoteError(uid string, threshold int, d time.Duration) {
 	p.saveLocked()
 }
 
-// NoteSuccess 成功请求重置错误计数。
+// NoteSuccess 成功请求重置错误计数与 429 退避计数。
 func (p *Pool) NoteSuccess(uid string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e, ok := p.byUID[uid]; ok {
 		e.errCount = 0
+		e.rateHits = 0
 	}
 }
 
@@ -330,6 +391,7 @@ func (p *Pool) ResetStates() {
 		e.until = time.Time{}
 		e.reason = ""
 		e.errCount = 0
+		e.rateHits = 0
 		e.credits = 0
 	}
 	p.saveLocked()

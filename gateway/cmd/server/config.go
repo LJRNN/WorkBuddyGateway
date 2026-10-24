@@ -31,11 +31,16 @@ type Config struct {
 	// AudioQuality: fast（仅 YAMNet）或 fine（YAMNet 定位 + PANNs CNN14 精判）。
 	AudioQuality string `json:"audio_quality"`
 
+	// StickySession 会话粘性：同一段对话固定在同一账号（默认开启）。
+	StickySession *bool `json:"sticky_session"`
+
 	Cooldown struct {
-		HardCredit  string `json:"hard_credit"`   // "12h"
-		SoftRate    string `json:"soft_rate"`     // "60s"
-		ErrThresh   int    `json:"err_threshold"` // 默认 3
-		ErrCooldown string `json:"err_cooldown"`  // "10m"
+		HardCredit  string `json:"hard_credit"`    // 兜底 "12h"
+		HardReset   int    `json:"hard_reset_hour"` // 余额冷却到最近这个整点，默认 4
+		SoftRate    string `json:"soft_rate"`      // 429 首次冷却 "10m"
+		SoftRateMax string `json:"soft_rate_max"`  // 429 退避封顶 "1h"
+		ErrThresh   int    `json:"err_threshold"`  // 默认 3
+		ErrCooldown string `json:"err_cooldown"`   // "10m"
 	} `json:"cooldown"`
 
 	Schedule struct {
@@ -50,6 +55,7 @@ type Config struct {
 	// 解析后
 	HardCreditDur  time.Duration `json:"-"`
 	SoftRateDur    time.Duration `json:"-"`
+	SoftRateMaxDur time.Duration `json:"-"`
 	ErrCooldownDur time.Duration `json:"-"`
 }
 
@@ -64,7 +70,9 @@ func Default() *Config {
 		Product:   "cli",
 	}
 	c.Cooldown.HardCredit = "12h"
-	c.Cooldown.SoftRate = "60s"
+	c.Cooldown.HardReset = 4
+	c.Cooldown.SoftRate = "10m"
+	c.Cooldown.SoftRateMax = "1h"
 	c.Cooldown.ErrThresh = 3
 	c.Cooldown.ErrCooldown = "10m"
 	c.Schedule.CheckinHours = []int{9, 21}
@@ -152,6 +160,15 @@ func (c *Config) normalize() error {
 	}
 	if c.SoftRateDur, err = time.ParseDuration(c.Cooldown.SoftRate); err != nil {
 		return fmt.Errorf("cooldown.soft_rate: %w", err)
+	}
+	if c.Cooldown.SoftRateMax == "" {
+		c.Cooldown.SoftRateMax = "1h"
+	}
+	if c.SoftRateMaxDur, err = time.ParseDuration(c.Cooldown.SoftRateMax); err != nil {
+		return fmt.Errorf("cooldown.soft_rate_max: %w", err)
+	}
+	if c.SoftRateMaxDur < c.SoftRateDur {
+		c.SoftRateMaxDur = c.SoftRateDur
 	}
 	if c.ErrCooldownDur, err = time.ParseDuration(c.Cooldown.ErrCooldown); err != nil {
 		return fmt.Errorf("cooldown.err_cooldown: %w", err)

@@ -8,6 +8,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -24,10 +25,12 @@ import android.view.WindowManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -40,6 +43,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** 控制台：概览 / 模型 / 账号 / 任务。 */
@@ -54,15 +58,22 @@ public class MainActivity extends Activity {
     private static final int TAB_ACCOUNTS = 2;
     private static final int TAB_TASKS = 3;
 
-    private static final int C_BG = 0xFFF4F5F7;
+    private static final int C_BG = 0xFFF4F6FB;
     private static final int C_CARD = 0xFFFFFFFF;
-    private static final int C_TEXT = 0xFF14161A;
-    private static final int C_MUTED = 0xFF667085;
-    private static final int C_BLUE = 0xFF2066D6;
-    private static final int C_GREEN = 0xFF1B7F3A;
-    private static final int C_RED = 0xFFC0392B;
-    private static final int C_GRAY = 0xFF98A2B3;
-    private static final int C_ORANGE = 0xFFB26A00;
+    private static final int C_TEXT = 0xFF111827;
+    private static final int C_MUTED = 0xFF6B7280;
+    private static final int C_BLUE = 0xFF2F6BFF;
+    private static final int C_GREEN = 0xFF0E9F6E;
+    private static final int C_RED = 0xFFDB3B3B;
+    private static final int C_GRAY = 0xFF9CA3AF;
+    private static final int C_ORANGE = 0xFFD97706;
+    /** 次级面：未选中 tab、次按钮、输入框底色。 */
+    private static final int C_SURFACE = 0xFFEFF2F8;
+    private static final int C_LINE = 0xFFE5E9F0;
+    private static final int C_BLUE_SOFT = 0xFFE8EFFF;
+    private static final int C_GREEN_SOFT = 0xFFE3F6EE;
+    private static final int C_HEAD_FROM = 0xFF2F6BFF;
+    private static final int C_HEAD_TO = 0xFF7BA6FF;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -80,6 +91,12 @@ public class MainActivity extends Activity {
     private TextView audioModeView;
     private TextView audioQualityView;
     private TextView frameView;
+    private CheckBox frameAuto;
+    private Slider frameCountSlider;
+    private Slider frameSizeSlider;
+    private Slider frameQualitySlider;
+    private TextView frameEstimate;
+    private TextView healthView;
     private TextView headerSub;
     private TextView lanStatus;
     private TextView lanAddr;
@@ -233,11 +250,13 @@ public class MainActivity extends Activity {
 
     private LinearLayout card() {
         LinearLayout c = column();
-        c.setPadding(dp(16), dp(14), dp(16), dp(14));
-        c.setBackground(round(C_CARD, 16));
+        c.setPadding(dp(18), dp(16), dp(18), dp(16));
+        c.setBackground(round(C_CARD, 20));
+        c.setClipToOutline(true);
+        c.setElevation(dp(1));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        p.setMargins(0, 0, 0, dp(10));
+        p.setMargins(0, 0, 0, dp(12));
         c.setLayoutParams(p);
         return c;
     }
@@ -246,16 +265,20 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(label);
         b.setAllCaps(false);
-        b.setTextSize(13);
+        b.setTextSize(14);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setPadding(dp(16), 0, dp(16), 0);
         b.setOnClickListener(l);
+        b.setStateListAnimator(null);
         if (primary) {
             b.setTextColor(0xFFFFFFFF);
-            b.setBackground(round(C_BLUE, 10));
+            b.setBackground(round(C_BLUE, 12));
         } else {
             b.setTextColor(C_TEXT);
-            b.setBackground(round(0xFFEDEFF3, 10));
+            b.setBackground(round(C_SURFACE, 12));
         }
-        b.setMinHeight(dp(40));
+        b.setMinHeight(dp(46));
+        b.setMinimumHeight(dp(46));
         return b;
     }
 
@@ -268,7 +291,7 @@ public class MainActivity extends Activity {
 
     private ScrollView page(LinearLayout col) {
         ScrollView s = new ScrollView(this);
-        col.setPadding(dp(12), dp(12), dp(12), dp(28));
+        col.setPadding(dp(14), dp(14), dp(14), dp(30));
         View body = col;
         if (isWide()) {
             List<View> children = new ArrayList<View>();
@@ -303,21 +326,27 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(C_BG);
 
         LinearLayout header = card();
-        header.setPadding(dp(16), dp(12), dp(16), dp(12));
+        header.setPadding(dp(18), dp(18), dp(18), dp(18));
+        GradientDrawable headBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{C_HEAD_FROM, C_HEAD_TO});
+        headBg.setCornerRadius(dp(24));
+        header.setBackground(headBg);
 
         LinearLayout top = row();
         TextView title = text(Gateway.hasAudioModel(this) ? "WorkBuddy 网关" : "WorkBuddy 网关 · 轻量版",
-                20, C_TEXT, true);
+                21, 0xFFFFFFFF, true);
+        title.setLetterSpacing(0.01f);
         top.addView(title, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        statusPill = text("已停止", 12, 0xFFFFFFFF, true);
-        statusPill.setPadding(dp(10), dp(4), dp(10), dp(4));
-        statusPill.setBackground(round(C_GRAY, 20));
+        statusPill = text("已停止", 12, C_MUTED, true);
+        statusPill.setPadding(dp(12), dp(5), dp(12), dp(5));
+        statusPill.setBackground(round(0xFFFFFFFF, 20));
         top.addView(statusPill);
         header.addView(top);
 
-        headerSub = text("", 12, C_MUTED, false);
-        headerSub.setPadding(0, dp(3), 0, dp(8));
+        headerSub = text("", 12, 0xE6FFFFFF, false);
+        headerSub.setPadding(0, dp(4), 0, dp(12));
         header.addView(headerSub);
 
         LinearLayout actions = row();
@@ -340,13 +369,21 @@ public class MainActivity extends Activity {
         root.addView(header);
 
         LinearLayout tabBar = row();
-        tabBar.setPadding(dp(4), 0, dp(4), dp(6));
+        tabBar.setPadding(dp(4), dp(4), dp(4), dp(4));
+        GradientDrawable tabBg = new GradientDrawable();
+        tabBg.setColor(C_SURFACE);
+        tabBg.setCornerRadius(dp(14));
+        tabBar.setBackground(tabBg);
+        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tabLp.setMargins(dp(2), 0, dp(2), dp(10));
+        tabBar.setLayoutParams(tabLp);
         String[] names = {"概览", "模型", "账号", "任务"};
         for (int i = 0; i < names.length; i++) {
             final int idx = i;
             TextView t = text(names[i], 14, C_MUTED, false);
             t.setGravity(Gravity.CENTER);
-            t.setPadding(0, dp(10), 0, dp(10));
+            t.setPadding(0, dp(9), 0, dp(9));
             t.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -439,6 +476,22 @@ public class MainActivity extends Activity {
         info.addView(lanAddr);
         col.addView(info);
 
+        // 运行健康：不持唤醒锁，被系统冻结/回收是常态，得让用户看得见。
+        LinearLayout health = card();
+        health.addView(text("运行健康", 15, C_TEXT, true));
+        healthView = text("", 12, C_MUTED, false);
+        healthView.setPadding(0, dp(6), 0, dp(2));
+        health.addView(healthView);
+        health.addView(button("重置计数", false, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Gateway.resetRuntimeStats(MainActivity.this);
+                refreshHealth();
+                toast("已重置");
+            }
+        }));
+        col.addView(health);
+
         LinearLayout acc = card();
         acc.addView(text("账号概览", 15, C_TEXT, true));
         accountSummary = text("未获取", 13, C_MUTED, false);
@@ -518,31 +571,64 @@ public class MainActivity extends Activity {
             diag.addView(qrow);
         }
 
-        frameView = text("视频抽帧：" + frameLabel(Gateway.getFramePreset(this)),
-                12, C_BLUE, true);
-        frameView.setPadding(0, dp(8), 0, dp(4));
-        diag.addView(frameView);
+        diag.addView(divider("视频抽帧"));
 
-        LinearLayout frow = row();
-        frow.addView(button("省流", false, new View.OnClickListener() {
+        final int[] tune = Gateway.frameTuning(this);
+        frameAuto = new CheckBox(this);
+        frameAuto.setText("按声音事件自适应帧数");
+        frameAuto.setTextSize(13);
+        frameAuto.setTextColor(C_TEXT);
+        frameAuto.setButtonTintList(ColorStateList.valueOf(C_BLUE));
+        frameAuto.setChecked(tune[0] < 0);
+        frameAuto.setPadding(0, dp(2), 0, dp(2));
+        frameAuto.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                switchFrame("simple");
+                frameCountSlider.setEnabled(!frameAuto.isChecked());
+                refreshFrameEstimate();
             }
-        }), weightParams());
-        frow.addView(button("标准", false, new View.OnClickListener() {
+        });
+        diag.addView(frameAuto);
+
+        frameCountSlider = slider("帧数", 4, 24, tune[0] < 0 ? 12 : tune[0], " 帧",
+                new IntChange() {
+                    @Override
+                    public void on(int v) {
+                        refreshFrameEstimate();
+                    }
+                });
+        frameCountSlider.setEnabled(tune[0] >= 0);
+        diag.addView(frameCountSlider.view);
+
+        frameSizeSlider = slider("单帧分辨率", 480, 1280, tune[1], " px",
+                new IntChange() {
+                    @Override
+                    public void on(int v) {
+                        refreshFrameEstimate();
+                    }
+                });
+        diag.addView(frameSizeSlider.view);
+
+        frameQualitySlider = slider("JPEG 质量", 50, 95, tune[2], "",
+                new IntChange() {
+                    @Override
+                    public void on(int v) {
+                        refreshFrameEstimate();
+                    }
+                });
+        diag.addView(frameQualitySlider.view);
+
+        frameEstimate = text("", 12, C_MUTED, false);
+        frameEstimate.setPadding(0, dp(2), 0, dp(8));
+        diag.addView(frameEstimate);
+        refreshFrameEstimate();
+
+        diag.addView(button("应用抽帧参数", true, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                switchFrame("standard");
+                applyFrameTuning();
             }
-        }), weightParams());
-        frow.addView(button("高精", false, new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                switchFrame("high");
-            }
-        }), weightParams());
-        diag.addView(frow);
+        }));
 
         if (Gateway.hasAudioModel(this)) {
             diag.addView(button("音频分类测试（选文件）", false, new View.OnClickListener() {
@@ -574,9 +660,10 @@ public class MainActivity extends Activity {
         logHead.addView(full);
         logs.addView(logHead);
 
-        logView = text("尚未启动。", 10, 0xFF344054, false);
+        logView = text("尚未启动。", 11, C_TEXT, false);
         logView.setTypeface(Typeface.MONOSPACE);
-        logView.setBackground(round(0xFFF7F8FA, 8));
+        logView.setTypeface(Typeface.MONOSPACE);
+        logView.setBackground(round(0xFFF8F9FC, 12));
         logView.setPadding(dp(8), dp(8), dp(8), dp(8));
         logs.addView(logView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(240)));
@@ -762,7 +849,8 @@ public class MainActivity extends Activity {
             pages[i].setVisibility(i == idx ? View.VISIBLE : View.GONE);
             tabViews[i].setTextColor(i == idx ? C_BLUE : C_MUTED);
             tabViews[i].setTypeface(i == idx ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-            tabViews[i].setBackground(i == idx ? round(0xFFE8F0FE, 10) : null);
+            tabViews[i].setBackground(i == idx ? round(C_CARD, 11) : null);
+            tabViews[i].setElevation(i == idx ? dp(1) : 0);
         }
         if (idx == TAB_MODELS) {
             loadModels();
@@ -800,7 +888,7 @@ public class MainActivity extends Activity {
     private void refreshLocal() {
         boolean run = WbService.isRunning();
         statusPill.setText(run ? "● 运行中" : "○ 已停止");
-        statusPill.setBackground(round(run ? C_GREEN : C_GRAY, 20));
+        statusPill.setTextColor(run ? C_GREEN : C_MUTED);
         startBtn.setEnabled(!run);
         stopBtn.setEnabled(run);
 
@@ -817,9 +905,38 @@ public class MainActivity extends Activity {
             logView.setText(sb.toString());
         }
 
+        refreshHealth();
         if (run && System.currentTimeMillis() - lastStatusAt > 4000 && !statusBusy) {
             loadStatus();
         }
+    }
+
+    /** 心跳超过 90s 没更新 = 被冻结过；boot_count = 服务被系统杀过几次。 */
+    private void refreshHealth() {
+        if (healthView == null) {
+            return;
+        }
+        boolean run = WbService.isRunning();
+        int boots = Gateway.bootCount(this);
+        int freezes = Gateway.freezeCount(this);
+        long last = Gateway.lastBeat(this);
+        StringBuilder sb = new StringBuilder();
+        if (!run) {
+            sb.append("服务未运行。启动后会在这里显示冻结与重启次数。");
+            healthView.setTextColor(C_MUTED);
+        } else if (Gateway.beatStale(this)) {
+            long gap = (System.currentTimeMillis() - last) / 1000;
+            sb.append("⚠ 已 ").append(gap).append(" 秒没有心跳，服务可能被系统冻结。\n");
+            sb.append("把本应用加入「电池优化白名单 / 自启动」后通常就没问题了。");
+            healthView.setTextColor(C_ORANGE);
+        } else {
+            sb.append("运行正常，每 30 秒一次心跳。");
+            healthView.setTextColor(C_GREEN);
+        }
+        if (boots > 0 || freezes > 0) {
+            sb.append("\n进程启动 ").append(boots).append(" 次 · 疑似冻结 ").append(freezes).append(" 次");
+        }
+        healthView.setText(sb.toString());
     }
 
     private void loadStatus() {
@@ -936,8 +1053,8 @@ public class MainActivity extends Activity {
             TextView badge = text(creditText(c), 12,
                     c.equals("x0.00") ? C_GREEN : (c.isEmpty() ? C_GRAY : C_BLUE), true);
             badge.setPadding(dp(9), dp(4), dp(9), dp(4));
-            badge.setBackground(round(c.equals("x0.00") ? 0xFFE6F4EA :
-                    (c.isEmpty() ? 0xFFF2F4F7 : 0xFFE8F0FE), 20));
+            badge.setBackground(round(c.equals("x0.00") ? C_GREEN_SOFT :
+                    (c.isEmpty() ? C_SURFACE : C_BLUE_SOFT), 20));
             r.addView(badge);
             modelsBox.addView(r);
             if (i < arr.length() - 1) {
@@ -968,7 +1085,7 @@ public class MainActivity extends Activity {
 
     private View divider() {
         View v = new View(this);
-        v.setBackgroundColor(0xFFEDEFF3);
+        v.setBackgroundColor(C_LINE);
         v.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
         return v;
@@ -1076,7 +1193,7 @@ public class MainActivity extends Activity {
                             11, C_RED, false));
                 } else if (cooling) {
                     c.addView(text("冷却中" + (reason.isEmpty() ? "" : "：" + reason),
-                            11, 0xFFB26B00, false));
+                            11, C_ORANGE, false));
                 }
             }
             accountsBox.addView(c);
@@ -1107,7 +1224,7 @@ public class MainActivity extends Activity {
             return C_RED;
         }
         if (st.optBoolean("cooling")) {
-            return 0xFFB26B00;
+            return C_ORANGE;
         }
         return C_GREEN;
     }
@@ -1701,32 +1818,127 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String frameLabel(String p) {
-        if ("simple".equals(p)) {
-            return "省流 · 6 帧 / 640px / 质量 70";
-        }
-        if ("high".equals(p)) {
-            return "高精 · 16 帧 / 1024px / 质量 88";
-        }
-        return "标准 · 按时长自适应 4–20 帧 / 768px";
+    // ------------------------------------------------------- 视频抽帧（无极调节）
+
+    private interface IntChange {
+        void on(int v);
     }
 
-    private void switchFrame(final String preset) {
-        if (preset.equals(Gateway.getFramePreset(this))) {
-            toast("已经是这个档位");
+    private static final class Slider {
+        LinearLayout view;
+        SeekBar bar;
+        TextView value;
+        int min;
+        String unit;
+
+        int get() {
+            return min + bar.getProgress();
+        }
+
+        void setEnabled(boolean on) {
+            bar.setEnabled(on);
+            view.setAlpha(on ? 1f : 0.38f);
+        }
+    }
+
+    private Slider slider(String name, final int min, final int max, int value,
+                          final String unit, final IntChange cb) {
+        final Slider s = new Slider();
+        s.min = min;
+        s.unit = unit;
+
+        LinearLayout box = column();
+        box.setPadding(0, dp(8), 0, 0);
+
+        LinearLayout head = row();
+        head.addView(text(name, 13, C_TEXT, false), new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView val = text(value + unit, 13, C_BLUE, true);
+        val.setTypeface(Typeface.MONOSPACE);
+        head.addView(val);
+        box.addView(head);
+
+        SeekBar bar = new SeekBar(this);
+        bar.setMax(max - min);
+        bar.setProgress(value - min);
+        bar.setProgressTintList(ColorStateList.valueOf(C_BLUE));
+        bar.setThumbTintList(ColorStateList.valueOf(C_BLUE));
+        bar.setProgressBackgroundTintList(ColorStateList.valueOf(C_LINE));
+        bar.setPadding(dp(4), dp(9), dp(4), dp(9));
+        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int v = min + progress;
+                val.setText(v + unit);
+                if (cb != null) {
+                    cb.on(v);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+        box.addView(bar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        s.view = box;
+        s.bar = bar;
+        s.value = val;
+        return s;
+    }
+
+    /** 拖动时只更新预估，点「应用」才落盘并重启（三个滑块只重启一次）。 */
+    private void refreshFrameEstimate() {
+        if (frameEstimate == null || frameSizeSlider == null || frameCountSlider == null) {
+            return;
+        }
+        boolean auto = frameAuto != null && frameAuto.isChecked();
+        int n = auto ? 12 : frameCountSlider.get();
+        int size = frameSizeSlider.get();
+        int q = frameQualitySlider == null ? 80 : frameQualitySlider.get();
+        double perFrame = size * (double) size * 0.12 * (q / 80.0);
+        double total = perFrame * n;
+        String cnt = auto ? "自适应（约 " + n + " 帧）" : n + " 帧";
+        frameEstimate.setText(String.format(Locale.US,
+                "%s · 每帧约 %d KB · 单次请求约 %.1f MB",
+                cnt, Math.round(perFrame / 1024), total / 1048576));
+    }
+
+    private void applyFrameTuning() {
+        if (frameCountSlider == null) {
             return;
         }
         try {
-            Gateway.setFramePreset(this, preset);
+            int count = frameAuto != null && frameAuto.isChecked() ? -1 : frameCountSlider.get();
+            Gateway.setFrameTuning(this, count, frameSizeSlider.get(),
+                    frameQualitySlider == null ? 80 : frameQualitySlider.get());
             restartIfRunning();
             if (!WbService.isRunning()) {
                 startGateway();
             }
-            frameView.setText("视频抽帧：" + frameLabel(preset));
-            toast("已切换抽帧档位");
+            toast("抽帧参数已生效");
         } catch (Exception e) {
-            show("切换失败", String.valueOf(e.getMessage()));
+            show("保存失败", String.valueOf(e.getMessage()));
         }
+    }
+
+    /** 卡片内的分组标题 + 细分割线。 */
+    private LinearLayout divider(String label) {
+        LinearLayout box = column();
+        box.setPadding(0, dp(12), 0, 0);
+        box.addView(text(label, 13, C_TEXT, true));
+        View line = new View(this);
+        line.setBackgroundColor(C_LINE);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
+        lp.setMargins(0, dp(8), 0, dp(2));
+        box.addView(line, lp);
+        return box;
     }
 
     private String qualityLabel(String q) {
@@ -2139,7 +2351,7 @@ public class MainActivity extends Activity {
                 + "FFmpeg — LGPL 2.1+ / GPL（仅用于构建期生成素材）\n\n"
                 + "WorkBuddy、CodeBuddy 等名称与商标归腾讯所有；\n"
                 + "本应用不包含其客户端代码。";
-        TextView t = text(text, 11, 0xFF344054, false);
+        TextView t = text(text, 11, C_TEXT, false);
         t.setTypeface(Typeface.MONOSPACE);
         t.setTextIsSelectable(true);
         t.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -2155,7 +2367,7 @@ public class MainActivity extends Activity {
     private void showRaw(String title, String summary, String body) {
         String text = summary + "\n\n------ 原始响应（前 4000 字）------\n"
                 + (body == null ? "" : (body.length() > 4000 ? body.substring(0, 4000) : body));
-        TextView t = text(text, 10, 0xFF344054, false);
+        TextView t = text(text, 10, C_TEXT, false);
         t.setTypeface(Typeface.MONOSPACE);
         t.setTextIsSelectable(true);
         t.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -2197,7 +2409,7 @@ public class MainActivity extends Activity {
 
     private void showLogDialog() {
         TextView t = text(WbService.logText().length() == 0 ? "暂无日志" : WbService.logText(),
-                10, 0xFF344054, false);
+                10, C_TEXT, false);
         t.setTypeface(Typeface.MONOSPACE);
         t.setTextIsSelectable(true);
         t.setPadding(dp(16), dp(12), dp(16), dp(12));

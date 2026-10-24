@@ -103,6 +103,20 @@ final class Gateway {
                     old.put("video_asr", true);
                     changed = true;
                 }
+                if (!old.has("sticky_session")) {
+                    old.put("sticky_session", true);
+                    changed = true;
+                }
+                JSONObject cool = old.optJSONObject("cooldown");
+                if (cool != null && !cool.has("soft_rate_max")) {
+                    // 429 改指数退避后，补上封顶与余额重置点。
+                    cool.put("soft_rate_max", "1h");
+                    cool.put("hard_reset_hour", 4);
+                    if ("60s".equals(cool.optString("soft_rate"))) {
+                        cool.put("soft_rate", "10m");
+                    }
+                    changed = true;
+                }
                 if (!old.has("audio_mode") || "native".equals(old.optString("audio_mode"))) {
                     // 原生音频已被上游证明不可用，统一迁移到 hybrid（转写 + 本地音效识别）。
                     old.put("audio_mode", "hybrid");
@@ -131,9 +145,13 @@ final class Gateway {
         o.put("frame_quality", 80);
         o.put("video_asr", true);
 
+        o.put("sticky_session", true);
+
         JSONObject cool = new JSONObject();
         cool.put("hard_credit", "12h");
-        cool.put("soft_rate", "60s");
+        cool.put("hard_reset_hour", 4);
+        cool.put("soft_rate", "10m");
+        cool.put("soft_rate_max", "1h");
         cool.put("err_threshold", 5);
         cool.put("err_cooldown", "10m");
         o.put("cooldown", cool);
@@ -188,40 +206,87 @@ final class Gateway {
         }
     }
 
-    /** 抽帧档位：simple / standard / high。 */
-    static String getFramePreset(Context c) {
+    /**
+     * 抽帧参数：count = -1 表示按声音事件自适应，否则固定帧数。
+     * 返回 {count, maxSize, quality}。
+     */
+    static int[] frameTuning(Context c) {
         try {
             JSONObject o = new JSONObject(new String(read(configFile(c)), "UTF-8"));
-            int size = o.optInt("frame_max_size", 768);
             int count = o.optInt("frame_count", 0);
-            if (size >= 1024) {
-                return "high";
+            if (count <= 0) {
+                count = -1;
             }
-            if (size <= 640) {
-                return "simple";
-            }
-            return count > 0 ? "fixed" : "standard";
+            int size = o.optInt("frame_max_size", 768);
+            int q = o.optInt("frame_quality", 80);
+            return new int[]{count, clamp(size, 480, 1280), clamp(q, 50, 95)};
         } catch (Exception e) {
-            return "standard";
+            return new int[]{-1, 768, 80};
         }
     }
 
-    static void setFramePreset(Context c, String preset) throws Exception {
+    /** 无极调节：帧数（-1 自适应）/ 分辨率 / 质量，范围由 UI 保证。 */
+    static void setFrameTuning(Context c, int count, int maxSize, int quality) throws Exception {
         JSONObject o = new JSONObject(new String(read(configFile(c)), "UTF-8"));
-        if ("simple".equals(preset)) {
-            o.put("frame_count", 6);
-            o.put("frame_max_size", 640);
-            o.put("frame_quality", 70);
-        } else if ("high".equals(preset)) {
-            o.put("frame_count", 16);
-            o.put("frame_max_size", 1024);
-            o.put("frame_quality", 88);
-        } else {
-            o.put("frame_count", 0);
-            o.put("frame_max_size", 768);
-            o.put("frame_quality", 80);
-        }
+        o.put("frame_count", count <= 0 ? 0 : clamp(count, 4, 24));
+        o.put("frame_max_size", clamp(maxSize, 480, 1280));
+        o.put("frame_quality", clamp(quality, 50, 95));
         write(configFile(c), o.toString(2).getBytes("UTF-8"));
+    }
+
+    static int clamp(int v, int lo, int hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    // ------------------------------------------------------------ 心跳 / 冻结诊断
+    //
+    // 不持有唤醒锁，系统随时可能在深度休眠时冻结进程。用户看到的现象是「连不上，
+    // 拉回前台又好了」。这里只做记录：服务每 30s 打一次点，两次打点间隔超过 90s
+    // 就说明中间被冻结过；服务重启次数则说明被系统杀过几次。
+
+    private static final String PREFS = "wb_runtime";
+    private static final long BEAT_GAP_MS = 90_000L;
+
+    static synchronized void beat(Context c) {
+        android.content.SharedPreferences sp =
+                c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        long last = sp.getLong("beat_at", 0L);
+        android.content.SharedPreferences.Editor ed = sp.edit();
+        if (last > 0 && now - last > BEAT_GAP_MS) {
+            ed.putInt("freeze_count", sp.getInt("freeze_count", 0) + 1);
+        }
+        ed.putLong("beat_at", now).apply();
+    }
+
+    static long lastBeat(Context c) {
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("beat_at", 0L);
+    }
+
+    static synchronized void noteBoot(Context c) {
+        android.content.SharedPreferences sp =
+                c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        sp.edit().putInt("boot_count", sp.getInt("boot_count", 0) + 1).apply();
+    }
+
+    static int bootCount(Context c) {
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("boot_count", 0);
+    }
+
+    static int freezeCount(Context c) {
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("freeze_count", 0);
+    }
+
+    static void resetRuntimeStats(Context c) {
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putInt("boot_count", 0).putInt("freeze_count", 0)
+                .putLong("beat_at", 0L).apply();
+    }
+
+    /** 当前心跳是否陈旧（服务在跑但长时间没打点）。 */
+    static boolean beatStale(Context c) {
+        long last = lastBeat(c);
+        return last > 0 && System.currentTimeMillis() - last > BEAT_GAP_MS;
     }
 
     /** APK 是否内置音频模型（YAMNet）。轻量版没有，只做语音转写。 */
