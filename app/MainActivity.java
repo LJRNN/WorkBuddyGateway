@@ -3,6 +3,7 @@ package io.local.wbgateway;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -11,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -22,6 +24,7 @@ import android.view.Gravity;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.animation.DecelerateInterpolator;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -31,6 +34,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -90,12 +94,7 @@ public class MainActivity extends Activity {
     private TextView productView;
     private TextView audioModeView;
     private TextView audioQualityView;
-    private TextView frameView;
-    private CheckBox frameAuto;
-    private Slider frameCountSlider;
-    private Slider frameSizeSlider;
-    private Slider frameQualitySlider;
-    private TextView frameEstimate;
+    private TextView frameSummary;
     private TextView healthView;
     private TextView headerSub;
     private TextView lanStatus;
@@ -481,21 +480,44 @@ public class MainActivity extends Activity {
         info.addView(lanAddr);
         col.addView(info);
 
+        // 抽帧参数：概览第二屏就能看到，点开是底部弹层，不用滚到诊断最底下。
+        LinearLayout frameCard = card();
+        LinearLayout fHead = row();
+        fHead.addView(text("视频抽帧", 15, C_TEXT, true), new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        fHead.addView(text("调整 ›", 13, C_BLUE, true));
+        frameCard.addView(fHead);
+        frameSummary = text("", 12, C_MUTED, false);
+        frameSummary.setPadding(0, dp(5), 0, 0);
+        frameCard.addView(frameSummary);
+        frameCard.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showFrameSheet();
+            }
+        });
+        col.addView(frameCard);
+        refreshFrameSummary();
+
         // 运行健康：不持唤醒锁，被系统冻结/回收是常态，得让用户看得见。
         LinearLayout health = card();
         health.addView(text("运行健康", 15, C_TEXT, true));
         healthView = text("", 12, C_MUTED, false);
         healthView.setPadding(0, dp(6), 0, dp(2));
         health.addView(healthView);
-        health.addView(button("重置计数", false, new View.OnClickListener() {
+        TextView resetStats = text("重置计数", 12, C_BLUE, true);
+        resetStats.setPadding(0, dp(8), 0, 0);
+        resetStats.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 Gateway.resetRuntimeStats(MainActivity.this);
                 refreshHealth();
                 toast("已重置");
             }
-        }));
+        });
+        health.addView(resetStats);
         col.addView(health);
+
 
         LinearLayout acc = card();
         acc.addView(text("账号概览", 15, C_TEXT, true));
@@ -511,27 +533,47 @@ public class MainActivity extends Activity {
         acc.addView(manage);
         col.addView(acc);
 
+        // 诊断默认收起：概览页首屏只留接入信息、健康、抽帧三块。
         LinearLayout diag = card();
-        diag.addView(text("诊断", 15, C_TEXT, true));
-        diag.addView(text("用一段公网 MP4 测试 step-5-preview 是否接受 video_url。"
-                + "会消耗少量积分，最长等 2 分钟。", 11, C_MUTED, false));
+        final LinearLayout dbody = column();
+        dbody.setVisibility(View.GONE);
+        LinearLayout dHead = row();
+        dHead.addView(text("诊断与调试", 15, C_TEXT, true), new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        final TextView dChevron = text("展开", 13, C_BLUE, true);
+        dHead.addView(dChevron);
+        dHead.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean open = dbody.getVisibility() != View.VISIBLE;
+                dbody.setVisibility(open ? View.VISIBLE : View.GONE);
+                dChevron.setText(open ? "收起" : "展开");
+            }
+        });
+        diag.addView(dHead);
+        diag.addView(dbody);
+        {
+            LinearLayout dintro = dbody;
+            dintro.addView(text("用一段公网 MP4 测试 step-5-preview 是否接受 video_url。"
+                    + "会消耗少量积分，最长等 2 分钟。", 11, C_MUTED, false));
+        }
 
         productView = text("当前上游身份：" + productLabel(Gateway.getProduct(this)),
                 12, C_BLUE, true);
         productView.setPadding(0, dp(8), 0, dp(4));
-        diag.addView(productView);
+        dbody.addView(productView);
 
         LinearLayout prow = row();
         prow.addView(productButton("CLI", "cli"), weightParams());
         prow.addView(productButton("桌面端", "workbuddy"), weightParams());
         prow.addView(productButton("VSCode", "vscode"), weightParams());
-        diag.addView(prow);
+        dbody.addView(prow);
 
         if (Gateway.hasAudioModel(this)) {
             audioModeView = text("音频处理：" + audioLabel(Gateway.getAudioMode(this)),
                     12, C_BLUE, true);
             audioModeView.setPadding(0, dp(8), 0, dp(4));
-            diag.addView(audioModeView);
+            dbody.addView(audioModeView);
 
             LinearLayout arow = row();
             arow.addView(button("仅转文字", false, new View.OnClickListener() {
@@ -546,17 +588,17 @@ public class MainActivity extends Activity {
                     switchAudioMode("hybrid");
                 }
             }), weightParams());
-            diag.addView(arow);
+            dbody.addView(arow);
 
             audioQualityView = text("音频精度：" + qualityLabel(Gateway.getAudioQuality(this)),
                     12, C_BLUE, true);
             audioQualityView.setPadding(0, dp(8), 0, dp(4));
-            diag.addView(audioQualityView);
+            dbody.addView(audioQualityView);
         } else {
             TextView lite = text("轻量版：未内置音频模型，只做语音转写（无音效/音乐识别）。",
                     12, C_ORANGE, true);
             lite.setPadding(0, dp(8), 0, dp(4));
-            diag.addView(lite);
+            dbody.addView(lite);
         }
 
         if (Gateway.hasAudioModel(this)) {
@@ -573,70 +615,11 @@ public class MainActivity extends Activity {
                     switchQuality("fine");
                 }
             }), weightParams());
-            diag.addView(qrow);
+            dbody.addView(qrow);
         }
 
-        diag.addView(divider("视频抽帧"));
-
-        final int[] tune = Gateway.frameTuning(this);
-        frameAuto = new CheckBox(this);
-        frameAuto.setText("按声音事件自适应帧数");
-        frameAuto.setTextSize(13);
-        frameAuto.setTextColor(C_TEXT);
-        frameAuto.setButtonTintList(ColorStateList.valueOf(C_BLUE));
-        frameAuto.setChecked(tune[0] < 0);
-        frameAuto.setPadding(0, dp(2), 0, dp(2));
-        frameAuto.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                frameCountSlider.setEnabled(!frameAuto.isChecked());
-                refreshFrameEstimate();
-            }
-        });
-        diag.addView(frameAuto);
-
-        frameCountSlider = slider("帧数", 4, 24, tune[0] < 0 ? 12 : tune[0], " 帧",
-                new IntChange() {
-                    @Override
-                    public void on(int v) {
-                        refreshFrameEstimate();
-                    }
-                });
-        frameCountSlider.setEnabled(tune[0] >= 0);
-        diag.addView(frameCountSlider.view);
-
-        frameSizeSlider = slider("单帧分辨率", 480, 1280, tune[1], " px",
-                new IntChange() {
-                    @Override
-                    public void on(int v) {
-                        refreshFrameEstimate();
-                    }
-                });
-        diag.addView(frameSizeSlider.view);
-
-        frameQualitySlider = slider("JPEG 质量", 50, 95, tune[2], "",
-                new IntChange() {
-                    @Override
-                    public void on(int v) {
-                        refreshFrameEstimate();
-                    }
-                });
-        diag.addView(frameQualitySlider.view);
-
-        frameEstimate = text("", 12, C_MUTED, false);
-        frameEstimate.setPadding(0, dp(2), 0, dp(8));
-        diag.addView(frameEstimate);
-        refreshFrameEstimate();
-
-        diag.addView(button("应用抽帧参数", true, new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                applyFrameTuning();
-            }
-        }));
-
         if (Gateway.hasAudioModel(this)) {
-            diag.addView(button("音频分类测试（选文件）", false, new View.OnClickListener() {
+            dbody.addView(button("音频分类测试（选文件）", false, new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     pickAudio();
@@ -644,7 +627,7 @@ public class MainActivity extends Activity {
             }));
         }
 
-        diag.addView(button("视频通路测试", true, new View.OnClickListener() {
+        dbody.addView(button("视频通路测试", true, new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 testVideo();
@@ -666,7 +649,6 @@ public class MainActivity extends Activity {
         logs.addView(logHead);
 
         logView = text("尚未启动。", 11, C_TEXT, false);
-        logView.setTypeface(Typeface.MONOSPACE);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setBackground(round(0xFFF8F9FC, 12));
         logView.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -1897,39 +1879,164 @@ public class MainActivity extends Activity {
         return s;
     }
 
-    /** 拖动时只更新预估，点「应用」才落盘并重启（三个滑块只重启一次）。 */
-    private void refreshFrameEstimate() {
-        if (frameEstimate == null || frameSizeSlider == null || frameCountSlider == null) {
+    /** 概览卡片上的摘要，不点开也能看到当前参数。 */
+    private void refreshFrameSummary() {
+        if (frameSummary == null) {
             return;
         }
-        boolean auto = frameAuto != null && frameAuto.isChecked();
-        int n = auto ? 12 : frameCountSlider.get();
-        int size = frameSizeSlider.get();
-        int q = frameQualitySlider == null ? 80 : frameQualitySlider.get();
-        double perFrame = size * (double) size * 0.12 * (q / 80.0);
-        double total = perFrame * n;
-        String cnt = auto ? "自适应（约 " + n + " 帧）" : n + " 帧";
-        frameEstimate.setText(String.format(Locale.US,
-                "%s · 每帧约 %d KB · 单次请求约 %.1f MB",
-                cnt, Math.round(perFrame / 1024), total / 1048576));
+        int[] t = Gateway.frameTuning(this);
+        int n = t[0] < 0 ? 12 : t[0];
+        double per = t[1] * (double) t[1] * 0.12 * (t[2] / 80.0);
+        frameSummary.setText(String.format(Locale.US, "%s · %d px · Q%d · 约 %.1f MB / 次",
+                t[0] < 0 ? "自适应" : t[0] + " 帧", t[1], t[2], per * n / 1048576.0));
     }
 
-    private void applyFrameTuning() {
-        if (frameCountSlider == null) {
-            return;
-        }
-        try {
-            int count = frameAuto != null && frameAuto.isChecked() ? -1 : frameCountSlider.get();
-            Gateway.setFrameTuning(this, count, frameSizeSlider.get(),
-                    frameQualitySlider == null ? 80 : frameQualitySlider.get());
-            restartIfRunning();
-            if (!WbService.isRunning()) {
-                startGateway();
+    /**
+     * 抽帧参数放在底部弹层里调：概览页一屏就能点到，滑杆集中在一个面板，
+     * 不用沿着诊断卡片往下找（Material 的 bottom sheet 用法）。
+     */
+    private void showFrameSheet() {
+        final int[] tune = Gateway.frameTuning(this);
+
+        final Dialog d = new Dialog(this);
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(C_CARD);
+        bg.setCornerRadii(new float[]{dp(28), dp(28), dp(28), dp(28), 0, 0, 0, 0});
+
+        LinearLayout sheet = column();
+        sheet.setPadding(dp(22), dp(10), dp(22), dp(20));
+
+        View handle = new View(this);
+        handle.setBackground(round(0xFFDCE0E8, 3));
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(36), dp(4));
+        hp.gravity = Gravity.CENTER_HORIZONTAL;
+        hp.setMargins(0, 0, 0, dp(14));
+        sheet.addView(handle, hp);
+
+        sheet.addView(text("视频抽帧", 20, C_TEXT, true));
+        TextView sub = text("帧数、分辨率、质量都会直接推高 token 消耗。", 12, C_MUTED, false);
+        sub.setPadding(0, dp(4), 0, dp(8));
+        sheet.addView(sub);
+
+        final Switch auto = new Switch(this);
+        auto.setText("按声音事件自适应帧数");
+        auto.setTextSize(13);
+        auto.setTextColor(C_TEXT);
+        auto.setChecked(tune[0] < 0);
+        auto.setPadding(0, dp(2), 0, dp(2));
+        auto.setThumbTintList(ColorStateList.valueOf(C_BLUE));
+        auto.setTrackTintList(ColorStateList.valueOf(0x552F6BFF));
+        sheet.addView(auto);
+
+        final Slider[] sl = new Slider[3];
+        final Runnable[] refresh = new Runnable[1];
+        IntChange cb = new IntChange() {
+            @Override
+            public void on(int v) {
+                if (refresh[0] != null) {
+                    refresh[0].run();
+                }
             }
-            toast("抽帧参数已生效");
-        } catch (Exception e) {
-            show("保存失败", String.valueOf(e.getMessage()));
+        };
+
+        sl[0] = slider("帧数", 4, 24, tune[0] < 0 ? 12 : tune[0], " 帧", cb);
+        sl[0].setEnabled(tune[0] >= 0);
+        sheet.addView(sl[0].view);
+        sl[1] = slider("单帧分辨率", 480, 1280, tune[1], " px", cb);
+        sheet.addView(sl[1].view);
+        sl[2] = slider("JPEG 质量", 50, 95, tune[2], "", cb);
+        sheet.addView(sl[2].view);
+
+        final TextView est = text("", 12, C_MUTED, false);
+        est.setPadding(0, dp(6), 0, dp(2));
+        sheet.addView(est);
+
+        refresh[0] = new Runnable() {
+            @Override
+            public void run() {
+                boolean a = auto.isChecked();
+                int n = a ? 12 : sl[0].get();
+                int size = sl[1].get();
+                int q = sl[2].get();
+                double per = size * (double) size * 0.12 * (q / 80.0);
+                est.setText(String.format(Locale.US, "%s · 每帧约 %d KB · 单次约 %.1f MB",
+                        a ? "自适应（约 " + n + " 帧）" : n + " 帧",
+                        Math.round(per / 1024), per * n / 1048576.0));
+            }
+        };
+        refresh[0].run();
+
+        auto.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sl[0].setEnabled(!auto.isChecked());
+                refresh[0].run();
+            }
+        });
+
+        LinearLayout btns = row();
+        btns.setPadding(0, dp(16), 0, 0);
+        btns.addView(button("取消", false, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                d.dismiss();
+            }
+        }), weightParams());
+        btns.addView(button("应用", true, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    Gateway.setFrameTuning(MainActivity.this,
+                            auto.isChecked() ? -1 : sl[0].get(), sl[1].get(), sl[2].get());
+                    d.dismiss();
+                    refreshFrameSummary();
+                    restartIfRunning();
+                    if (!WbService.isRunning()) {
+                        startGateway();
+                    }
+                    toast("抽帧参数已生效");
+                } catch (Exception e) {
+                    show("保存失败", String.valueOf(e.getMessage()));
+                }
+            }
+        }), weightParams());
+        sheet.addView(btns);
+
+        ScrollView sc = new ScrollView(this);
+        sc.setBackground(bg);
+        sc.addView(sheet);
+        d.setContentView(sc);
+
+        Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.dimAmount = 0.42f;
+            w.setAttributes(lp);
+            w.setGravity(Gravity.BOTTOM);
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
+        d.show();
+
+        // 横屏 / 小屏时限制最大高度，超出部分在 ScrollView 里滚。
+        final Dialog fd = d;
+        sheet.post(new Runnable() {
+            @Override
+            public void run() {
+                int max = (int) (getResources().getDisplayMetrics().heightPixels * 0.88f);
+                if (sheet.getHeight() > max && fd.getWindow() != null) {
+                    fd.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, max);
+                }
+            }
+        });
+
+        // 从底部上滑，和系统的 bottom sheet 观感一致。
+        sheet.setTranslationY(dp(280));
+        sheet.animate().translationY(0).setDuration(220)
+                .setInterpolator(new DecelerateInterpolator()).start();
     }
 
     /** 卡片内的分组标题 + 细分割线。 */
